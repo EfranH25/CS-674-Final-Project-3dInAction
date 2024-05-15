@@ -1,3 +1,4 @@
+
 # Author: Yizhak Ben-Shabat (Itzik), 2022
 # train 3DInAction
 
@@ -11,6 +12,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
 import random
+import json
 
 from models.pointnet import feature_transform_regularizer
 from models import build_model
@@ -59,6 +61,8 @@ def main(args):
     
     logger = create_basic_logger(logdir = logdir, level = args.loglevel)
 
+    logger = create_basic_logger(logdir = logdir, level = args.loglevel)
+    
     # TODO: move to cfg project_name, entity
     if cfg['DATA'].get('name') == 'DFAUST':
         project_name = 'DFAUST'
@@ -66,13 +70,16 @@ def main(args):
         project_name = 'IKEA EGO'
     elif cfg['DATA'].get('name') == 'IKEA_ASM':
         project_name = 'IKEA ASM'
+    elif cfg['DATA'].get('name') == 'MSR-Action3D':
+        project_name = 'MSR-Action3D'
     else:
         raise NotImplementedError
     
     logger.info(f'=================== Starting training run for {args.identifier} with data {project_name}')
     logger.info(cfg)
     
-    #wandb_run = wandb.init(project=project_name, entity='cgmlab', save_code=True)
+
+    #wandb_run = wandb.init(project=project_name, entity='mkjohn', save_code=True)
     #cfg['WANDB'] = {'id': wandb_run.id, 'project': wandb_run.project, 'entity': wandb_run.entity}
 
     with open(os.path.join(logdir, 'config.yaml'), 'w') as outfile:
@@ -110,19 +117,28 @@ def run(cfg, logdir, args):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-
-    os.system('cp %s %s' % (__file__, logdir))  # backup the current training file
-    logger.debug(f'backup the current training file: {(__file__, logdir)}')
-    os.makedirs(os.path.join(logdir, 'models'), exist_ok=True)
-    os.system('cp %s %s' % ('models/*.py', os.path.join(logdir, 'models')))  # backup the models files
-    temp = os.path.join(logdir, 'models')
-    logger.debug(f'backup the models files: models/*.py, {temp}')
-
+    back_file = os.path.join(logdir, 'train.py')
+    models_backup_path = os.path.join(logdir, 'models')
+    os.makedirs(models_backup_path, exist_ok=True)
+    if os.name == 'nt':
+        os.system(f'copy "{__file__}" "{back_file}"') # backup the current training file
+        for file in os.listdir('models'):
+            if file.endswith('.py'):
+                current_file = os.path.join('models', file)
+                new_file=os.path.join(models_backup_path, file)
+                os.system(f'copy "{current_file}" "{new_file}"')
+    else:
+        os.system(f'cp "{__file__}" "{back_file}"') # backup the current training file
+        os.system(f'cp "models/*.py" "{models_backup_path}"')  # backup the models files
+        
+    logger.debug(f'backed up the current training file: {(__file__, back_file)}')
+    logger.debug(f'backup the models files: models/*.py, {models_backup_path}')
+    
     # build dataloader and dataset
     train_dataloader, train_dataset = build_dataloader(config=cfg, training=True, shuffle=False, logger=logger) # should be unshuffled because of sampler
     test_dataloader, test_dataset = build_dataloader(config=cfg, training=False, shuffle=True, logger=logger)
     num_classes = train_dataset.num_classes
-
+    
     # build model
     model = build_model(cfg['MODEL'], num_classes, frames_per_clip)
 
@@ -142,6 +158,7 @@ def run(cfg, logdir, args):
 
     model.cuda()
     model = nn.DataParallel(model)
+    #best_model_trained_yet_and_its_accuracy = [None, 51.25]
 
     # define optimizer and scheduler
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1E-6)
@@ -162,6 +179,18 @@ def run(cfg, logdir, args):
 
     pbar = tqdm(total=n_epochs, desc='Training', dynamic_ncols=True)
     
+    if refine:
+        pbar.update(refine_epoch)
+    
+    best_acc = 0
+    best_model = 0
+    
+    train_log_dict = {}
+    test_log_dict = {}
+    train_result_list = []
+    test_result_list = []
+    best_model_list = []
+
     while steps <= n_epochs:
         if steps <= refine_epoch and refine and refine_flag:
             # lr_sched.step()
@@ -187,22 +216,50 @@ def run(cfg, logdir, args):
         loader_pbar = tqdm(total=len(train_dataloader), dynamic_ncols=True, leave=False)
         for train_batchind, data in enumerate(train_dataloader):
             num_iter += 1
+            
             # get the inputs
-            inputs, labels, vid_idx, frame_pad = data['inputs'], data['labels'], data['vid_idx'], data['frame_pad']
+            if cfg['DATA'].get('name') == 'MSR-Action3D':
+                if torch.is_tensor(data[0]) == False or torch.is_tensor(data[1]) == False:
+                    data_list = []
+                    label_list = []
+                    for i in data:
+                        data_list.append(i[1])
+                        label_list.append(i[0])
+                        
+                    inputs = torch.stack(data_list)
+                    labels = torch.Tensor(label_list)
+                else:
+                    inputs = data[1]
+                    labels = data[0]
+            else:
+                inputs, labels, vid_idx, frame_pad = data['inputs'], data['labels'], data['vid_idx'], data['frame_pad']
+                
+            
             in_channel = cfg['MODEL'].get('in_channel', 3)
             inputs = inputs[:, :, 0:in_channel, :]
             inputs = inputs.cuda().requires_grad_().contiguous()
             labels = labels.cuda()
-
+            
             out_dict = model(inputs)
             per_frame_logits = out_dict['pred']
 
-            # compute localization loss
-            loc_loss = F.binary_cross_entropy_with_logits(per_frame_logits, labels)
+            if cfg['DATA'].get('name') == 'MSR-Action3D':  
+                labels = labels.unsqueeze(1) + torch.zeros((per_frame_logits.shape[0], per_frame_logits.shape[2])).cuda()
+                labels = labels.to(dtype = torch.long)
+                # compute localization loss
+                loc_loss = F.cross_entropy(per_frame_logits, labels.to(dtype = torch.long))
+            else:
+                # compute localization loss
+                loc_loss = F.binary_cross_entropy_with_logits(per_frame_logits, labels)
+                
             tot_loc_loss += loc_loss.item()
 
-            # compute classification loss (with max-pooling along time B x C x T)
-            cls_loss = F.binary_cross_entropy_with_logits(torch.max(per_frame_logits, dim=2)[0], torch.max(labels, dim=2)[0])
+            # compute classification loss (with max-pooling along time dim1 x dim2)
+            if cfg['DATA'].get('name') == 'MSR-Action3D':  
+                cls_loss = F.cross_entropy(torch.max(per_frame_logits, dim=2)[0], torch.max(labels, dim=1)[0])
+            else:
+                cls_loss = F.binary_cross_entropy_with_logits(torch.max(per_frame_logits, dim=2)[0], torch.max(labels, dim=2)[0])
+            
             tot_cls_loss += cls_loss.item()
             loss = (0.5 * loc_loss + 0.5 * cls_loss) / num_steps_per_update
             if pc_model == 'pn1' or pc_model == 'pn1_4d_basic':
@@ -211,10 +268,14 @@ def run(cfg, logdir, args):
 
             tot_loss += loss.item()
             loss.backward()
-
-            acc = utils.accuracy_v2(torch.argmax(per_frame_logits, dim=1), torch.argmax(labels, dim=1))
+            
+            
+            if cfg['DATA'].get('name') == 'MSR-Action3D': 
+                acc = utils.accuracy_v2(torch.argmax(per_frame_logits, dim=1), labels)
+            else:
+                acc = utils.accuracy_v2(torch.argmax(per_frame_logits, dim=1), torch.argmax(labels, dim=1))
+                
             avg_acc.append(acc.item())
-
             train_fraction_done = (train_batchind + 1) / train_num_batch
 
             if num_iter == num_steps_per_update or train_batchind == len(train_dataloader)-1:
@@ -235,7 +296,9 @@ def run(cfg, logdir, args):
                     "train/epoch": steps,
                 }
                 
+                train_result_list.append(train_log_dict)
                 #wandb.log(train_log_dict)
+
 
                 num_iter = 0
                 tot_loss = 0.
@@ -243,7 +306,24 @@ def run(cfg, logdir, args):
             if test_fraction_done <= train_fraction_done and test_batchind + 1 < test_num_batch:
                 model.eval()
                 test_batchind, data = next(test_enum)
-                inputs, labels, vid_idx, frame_pad = data['inputs'], data['labels'], data['vid_idx'], data['frame_pad']
+                
+                if cfg['DATA'].get('name') == 'MSR-Action3D': 
+                    if torch.is_tensor(data[0]) == False or torch.is_tensor(data[1]) == False:
+                        data_list = []
+                        label_list = []
+                        for i in data:
+                            data_list.append(i[1])
+                            label_list.append(i[0])
+                            
+                        inputs = torch.stack(data_list)
+                        labels = torch.Tensor(label_list)
+                    else:
+                        inputs = data[1]
+                        labels = data[0]
+                else:
+                    inputs, labels, vid_idx, frame_pad = data['inputs'], data['labels'], data['vid_idx'], data['frame_pad']
+                
+                # inputs, labels, vid_idx, frame_pad = data['inputs'], data['labels'], data['vid_idx'], data['frame_pad']
                 in_channel = cfg['MODEL'].get('in_channel', 3)
                 inputs = inputs[:, :, 0:in_channel, :]
                 inputs = inputs.cuda().requires_grad_().contiguous()
@@ -252,28 +332,66 @@ def run(cfg, logdir, args):
                 with torch.no_grad():
                     out_dict = model(inputs)
                     per_frame_logits = out_dict['pred']
-                    # compute localization loss
-                    loc_loss = F.binary_cross_entropy_with_logits(per_frame_logits, labels)
-                    # compute classification loss (with max-pooling along time B x C x T)
-                    cls_loss = F.binary_cross_entropy_with_logits(torch.max(per_frame_logits, dim=2)[0],
+                    if cfg['DATA'].get('name') == 'MSR-Action3D': 
+                        labels = labels.unsqueeze(1) + torch.zeros((per_frame_logits.shape[0], per_frame_logits.shape[2])).cuda()
+                        labels = labels.to(dtype = torch.long)
+                        # compute localization loss
+                        loc_loss = F.cross_entropy(per_frame_logits, labels)
+                        # compute classification loss (with max-pooling along time dim1 x dim2)
+                        cls_loss = F.cross_entropy(torch.max(per_frame_logits, dim=2)[0],
+                                                                  torch.max(labels, dim = 1)[0])
+                    else:
+                        # compute localization loss
+                        loc_loss = F.binary_cross_entropy_with_logits(per_frame_logits, labels)
+                        cls_loss = F.binary_cross_entropy_with_logits(torch.max(per_frame_logits, dim=2)[0],
                                                                   torch.max(labels, dim=2)[0])
+                    
                     loss = (0.5 * loc_loss + 0.5 * cls_loss) / num_steps_per_update
                     if pc_model == 'pn1' or pc_model == 'pn1_4d_basic':
                         trans, trans_feat = out_dict['trans'], out_dict['trans_feat']
                         loss += (0.001 * feature_transform_regularizer(trans) +
                                  0.001 * feature_transform_regularizer(trans_feat)) / num_steps_per_update
-                    acc = utils.accuracy_v2(torch.argmax(per_frame_logits, dim=1), torch.argmax(labels, dim=1))
+                    if cfg['DATA'].get('name') == 'MSR-Action3D': 
+                        acc = utils.accuracy_v2(torch.argmax(per_frame_logits, dim=1), labels)
+                    else:
+                        acc = utils.accuracy_v2(torch.argmax(per_frame_logits, dim=1), torch.argmax(labels, dim=1))
 
                 test_log_dict = {
                     "test/step": n_examples,
                     "test/loss": loss.item(),
                     "test/cls_loss": loc_loss.item(),
                     "test/loc_loss": cls_loss.item(),
-                    "test/Accuracy": acc.item()
+                    "test/Accuracy": acc.item(),
+                    "test/epoch": steps
                 }
+                test_result_list.append(test_log_dict)
+                
+                if test_log_dict["test/Accuracy"] >= best_acc:
+                    best_acc = test_log_dict["test/Accuracy"]
+                    logger.info(f'********* Best model test accuracy so far in test batch {test_batchind} step {steps}: {test_log_dict}')
+                    
+                    # save model
+                    torch.save({"model_state_dict": model.module.state_dict(),
+                                "optimizer_state_dict": optimizer.state_dict(),
+                                "lr_state_dict": lr_sched.state_dict()},
+                            os.path.join(logdir,  'best' +'_'+ str(steps).zfill(6) + '_'+ str(test_batchind) + '.pt'))
+                    
+                    test_result_list[-1]['best'] = 'best' +'_'+ str(steps).zfill(6) + '_'+ str(test_batchind) + '.pt'
+                    
+                    with open(os.path.join(logdir, 'test_result_list.json'), 'w') as f:
+                        json.dump(test_result_list, f)
+                    
+                    with open(os.path.join(logdir, 'train_result_list.json'), 'w') as f:
+                        json.dump(train_result_list, f)
+                        
+                    best_model_list.append(test_result_list[-1])
+                    with open(os.path.join(logdir, 'best_model_list.json'), 'w') as f:
+                        json.dump(best_model_list, f)
+
                 #wandb.log(log_dict)
                 test_fraction_done = (test_batchind + 1) / test_num_batch
-                model.train()                
+                model.train()
+
             loader_pbar.update()
         loader_pbar.close()
 
@@ -281,11 +399,20 @@ def run(cfg, logdir, args):
         logger.info(f'Last testing log for epoch {steps}: {test_log_dict}')
         
         if steps % save_every == 0 or steps == n_epochs:
+            logger.info(f'Last training log for epoch {steps}: {train_log_dict}')
+            logger.info(f'Last testing log for epoch {steps}: {test_log_dict}')
             # save model
             torch.save({"model_state_dict": model.module.state_dict(),
                         "optimizer_state_dict": optimizer.state_dict(),
                         "lr_state_dict": lr_sched.state_dict()},
                        os.path.join(logdir, str(steps).zfill(6) + '.pt'))
+            
+            with open(os.path.join(logdir, 'test_result_list.json'), 'w') as f:
+                json.dump(test_result_list, f)
+                    
+            with open(os.path.join(logdir, 'train_result_list.json'), 'w') as f:
+                json.dump(train_result_list, f)
+
 
         steps += 1
         lr_sched.step()
@@ -293,6 +420,7 @@ def run(cfg, logdir, args):
 
 
 if __name__ == '__main__':
+    print('start training')
     parser = argparse.ArgumentParser()
     parser.add_argument('--logdir', type=str, default='./log/', help='path to model save dir')
     parser.add_argument('--loglevel', type=str, default='info', help='set level of logger')
@@ -301,4 +429,3 @@ if __name__ == '__main__':
     parser.add_argument('--fix_random_seed', action='store_true', default=False, help='fix random seed')
     args = parser.parse_args()
     main(args)
-    #print('hello')

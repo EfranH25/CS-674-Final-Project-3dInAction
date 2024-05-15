@@ -38,9 +38,7 @@ def create_basic_logger(logdir, level = 'info'):
         logger.setLevel(logging.INFO)
     
     #? create handlers
-    
     print('---------------------- ', os.path.join(logdir, "log_eval.log"))
-    
     file_handler = logging.FileHandler(os.path.join(logdir, "log_eval.log"))
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     file_handler.setFormatter(formatter)
@@ -68,7 +66,7 @@ def main(args):
     training_ = True if subset == 'train' else False
     dataset = build_dataset(cfg, training=training_)
     gt_labels = dataset.action_labels
-    
+
     if data_name == 'DFAUST':
         gender = cfg['DATA']['gender']
         gt_json_path = os.path.join(cfg['DATA']['dataset_path'], 'gt_segments_'+gender+'.json')
@@ -109,7 +107,7 @@ def main(args):
     # Compute accuracy
     acc1_per_vid = []
     acc3_per_vid = []
-    
+
     gt_single_labels = []
     for vid_idx in range(len(logits)):
         if data_name == 'DFAUST':
@@ -175,8 +173,8 @@ def main(args):
     img = plt.imread(img_out_filename)
 
     columns = ["top 1", "top 3", "macro", "mAP"]
-    #\results_table = wandb.Table(columns=columns, data=[[top1, top3, balanced_score, mAP]])
-    #\images = wandb.Image(img, caption="Confusion matrix")
+    #results_table = wandb.Table(columns=columns, data=[[top1, top3, balanced_score, mAP]])
+    #images = wandb.Image(img, caption="Confusion matrix")
     #wandb.log({"eval/confusion matrix": images, "eval/Results summary": results_table})
 
 if __name__ == '__main__':
@@ -186,6 +184,4 @@ if __name__ == '__main__':
     parser.add_argument('--identifier', type=str, default='debug', help='unique run identifier')
     args = parser.parse_args()
     main(args)
-
-
 

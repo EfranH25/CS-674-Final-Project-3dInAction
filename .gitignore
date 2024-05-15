@@ -14,3 +14,4 @@ datasets/data/DFAUST/*
 datasets/data/IKEA ASM/*
 datasets/data/MSRAction3D_fps/*
 efran_test.py
+my_token_file

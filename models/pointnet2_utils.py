@@ -1,3 +1,4 @@
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -6,34 +7,31 @@ import numpy as np
 from torch.autograd import Function
 import warnings
 
-try:
-    import models._ext as _ext
-except ImportError:
-    from torch.utils.cpp_extension import load
-    import glob
-    import os.path as osp
-    import os
+# try:
+#     import models._ext as _ext
+# except ImportError:
+#     from torch.utils.cpp_extension import load
+#     import glob
+#     import os.path as osp
+#     import os
 
-    print('------------ FAILED import models._ext as _ext')
-    print('------------ NOT USING FPS')
-    
-    warnings.warn("Unable to load pointnet2_ops cpp extension. JIT Compiling.")
+#     warnings.warn("Unable to load pointnet2_ops cpp extension. JIT Compiling.")
 
-    """_ext_src_root = osp.join(osp.dirname(__file__), "_ext-src")
-    _ext_sources = glob.glob(osp.join(_ext_src_root, "src", "*.cpp")) + glob.glob(
-        osp.join(_ext_src_root, "src", "*.cu")
-    )
-    _ext_headers = glob.glob(osp.join(_ext_src_root, "include", "*"))
+#     _ext_src_root = osp.join(osp.dirname(__file__), "_ext-src")
+#     _ext_sources = glob.glob(osp.join(_ext_src_root, "src", "*.cpp")) + glob.glob(
+#         osp.join(_ext_src_root, "src", "*.cu")
+#     )
+#     _ext_headers = glob.glob(osp.join(_ext_src_root, "include", "*"))
 
-    os.environ["TORCH_CUDA_ARCH_LIST"] = "3.7+PTX;5.0;6.0;6.1;6.2;7.0;7.5"
-    _ext = load(
-        "_ext",
-        sources=_ext_sources,
-        extra_include_paths=[osp.join(_ext_src_root, "include")],
-        extra_cflags=["-O3"],
-        extra_cuda_cflags=["-O3", "-Xfatbin", "-compress-all"],
-        with_cuda=True,
-    )"""
+#     os.environ["TORCH_CUDA_ARCH_LIST"] = "3.7+PTX;5.0;6.0;6.1;6.2;7.0;7.5"
+#     _ext = load(
+#         "_ext",
+#         sources=_ext_sources,
+#         extra_include_paths=[osp.join(_ext_src_root, "include")],
+#         extra_cflags=["-O3"],
+#         extra_cuda_cflags=["-O3", "-Xfatbin", "-compress-all"],
+#         with_cuda=True,
+#     )
 
 def timeit(tag, t):
     print("{}: {}s".format(tag, time() - t))
@@ -539,4 +537,6 @@ class FurthestPointSampling(Function):
         return None, None
 
 
+farthest_point_sample = FurthestPointSampling.apply
 #farthest_point_sample = FurthestPointSampling.apply
+
