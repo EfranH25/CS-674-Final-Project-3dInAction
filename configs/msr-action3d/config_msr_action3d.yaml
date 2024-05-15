@@ -1,6 +1,6 @@
 DATA:
   data_sampler: weighted
-  dataset_path: datasets/data/MSRAction3D_fps
+  dataset_path: /GoogleDrive/MyDrive/Colab Notebooks/COMPSCI 674/Final Project/MSRAction3DFPS/MSRAction3D_fps/
   frame_skip: 1
   frames_per_clip: 64
   gender: all
@@ -86,11 +86,11 @@ TRAINING:
   aug:
   - ''
   batch_size: 32
-  lr: 0.001
-  n_epochs: 3000
+  lr: 0.01
+  n_epochs: 300
   pretrained_model: null
   refine: false
-  refine_epoch: 2700
+  refine_epoch: 0
   steps_per_update: 8
 num_workers: 0
 save_every: 100 #10
