@@ -18,7 +18,7 @@ from models.pointnet import feature_transform_regularizer
 from models import build_model
 from datasets import build_dataloader
 
-#import wandb
+import wandb
 from tqdm import tqdm
 
 import logging
@@ -76,21 +76,22 @@ def main(args):
     logger.info(f'=================== Starting training run for {args.identifier} with data {project_name}')
     logger.info(cfg)
     
-    #wandb_run = wandb.init(project=project_name, entity='mkjohn', save_code=True)
-    #cfg['WANDB'] = {'id': wandb_run.id, 'project': wandb_run.project, 'entity': wandb_run.entity}
+    wandb_run = wandb.init(project=project_name, entity='mkjohn', save_code=True)
+    cfg['WANDB'] = {'id': wandb_run.id, 'project': wandb_run.project, 'entity': wandb_run.entity}
 
     with open(os.path.join(logdir, 'config.yaml'), 'w') as outfile:
         yaml.dump(cfg, outfile, default_flow_style=False)
 
     logger.info(f'saving outputs for this run too: {logdir}')
     
-    #wandb_run.name = args.identifier
-    #wandb.config.update(cfg)  # adds all the arguments as config variables
-    #wandb.run.log_code(".")
+    wandb_run.name = args.identifier
+    wandb.config.update(cfg)  # adds all the arguments as config variables
+    wandb.run.log_code(".")
+    
     # define our custom x axis metric
-    #wandb.define_metric("train/step")
-    #wandb.define_metric("train/*", step_metric="train/step")
-    #wandb.define_metric("test/*", step_metric="train/step")
+    wandb.define_metric("train/step")
+    wandb.define_metric("train/*", step_metric="train/step")
+    wandb.define_metric("test/*", step_metric="train/step")
 
     # need to add argparse
     run(cfg, logdir, args)
@@ -131,6 +132,7 @@ def run(cfg, logdir, args):
     logger.debug(f'backed up the current training file: {(__file__, back_file)}')
     logger.debug(f'backup the models files: models/*.py, {models_backup_path}')
     
+
     # build dataloader and dataset
     train_dataloader, train_dataset = build_dataloader(config=cfg, training=True, shuffle=False, logger=logger) # should be unshuffled because of sampler
     test_dataloader, test_dataset = build_dataloader(config=cfg, training=False, shuffle=True, logger=logger)
@@ -153,7 +155,7 @@ def run(cfg, logdir, args):
         checkpoint = torch.load(refine_model_filename)
         model.load_state_dict(checkpoint["model_state_dict"])
 
-    model.cuda()
+    #model.cuda()
     model = nn.DataParallel(model)
     #best_model_trained_yet_and_its_accuracy = [None, 51.25]
 
@@ -175,15 +177,8 @@ def run(cfg, logdir, args):
     
     if refine:
         pbar.update(refine_epoch)
-    
-    best_acc = 0
-    best_model = 0
-    
-    train_log_dict = {}
-    test_log_dict = {}
-    train_result_list = []
-    test_result_list = []
-    best_model_list = []
+
+
     while steps <= n_epochs:
         if steps <= refine_epoch and refine and refine_flag:
             # lr_sched.step()
@@ -210,48 +205,40 @@ def run(cfg, logdir, args):
             num_iter += 1
             
             # get the inputs
-            if cfg['DATA'].get('name') == 'MSR-Action3D':
-                if torch.is_tensor(data[0]) == False or torch.is_tensor(data[1]) == False:
-                    data_list = []
-                    label_list = []
-                    for i in data:
-                        data_list.append(i[1])
-                        label_list.append(i[0])
-                        
-                    inputs = torch.stack(data_list)
-                    labels = torch.Tensor(label_list)
-                else:
-                    inputs = data[1]
-                    labels = data[0]
-            else:
-                inputs, labels, vid_idx, frame_pad = data['inputs'], data['labels'], data['vid_idx'], data['frame_pad']
-                
-            
-            in_channel = cfg['MODEL'].get('in_channel', 3)
-            inputs = inputs[:, :, 0:in_channel, :]
-            inputs = inputs.cuda().requires_grad_().contiguous()
-            labels = labels.cuda()
-            
+            # if torch.is_tensor(data[0]) == False or torch.is_tensor(data[1]) == False:
+            #     data_list = []
+            #     label_list = []
+            #     for i in data:
+            #         data_list.append(i[1])
+            #         label_list.append(i[0])
+                    
+            #     inputs = torch.stack(data_list)
+            #     labels = torch.Tensor(label_list)
+            # else:
+            inputs = data[1]
+            labels = data[0]
+      
+            # inputs, labels, vid_idx, frame_pad = data['inputs'], data['labels'], data['vid_idx'], data['frame_pad']
+            # in_channel = cfg['MODEL'].get('in_channel', 3)
+            # inputs = inputs[:, :, 0:in_channel, :]
+
+            inputs = inputs.requires_grad_().contiguous()         
+            #inputs = inputs.cuda().requires_grad_().contiguous()
+            #labels = labels.cuda()
+            print("DEBUG -236")
             out_dict = model(inputs)
             per_frame_logits = out_dict['pred']
 
-            if cfg['DATA'].get('name') == 'MSR-Action3D':  
-                labels = labels.unsqueeze(1) + torch.zeros((per_frame_logits.shape[0], per_frame_logits.shape[2])).cuda()
-                labels = labels.to(dtype = torch.long)
-                # compute localization loss
-                loc_loss = F.cross_entropy(per_frame_logits, labels.to(dtype = torch.long))
-            else:
-                # compute localization loss
-                loc_loss = F.binary_cross_entropy_with_logits(per_frame_logits, labels)
-                
+            labels = labels.unsqueeze(1) + torch.zeros((per_frame_logits.shape[0], per_frame_logits.shape[2]))
+            # labels = labels.unsqueeze(1) + torch.zeros((per_frame_logits.shape[0], per_frame_logits.shape[2])).cuda()
+            labels = labels.to(dtype = torch.long)
+
+            # compute localization loss
+            loc_loss = F.cross_entropy(per_frame_logits, labels.to(dtype = torch.long))
             tot_loc_loss += loc_loss.item()
 
             # compute classification loss (with max-pooling along time dim1 x dim2)
-            if cfg['DATA'].get('name') == 'MSR-Action3D':  
-                cls_loss = F.cross_entropy(torch.max(per_frame_logits, dim=2)[0], torch.max(labels, dim=1)[0])
-            else:
-                cls_loss = F.binary_cross_entropy_with_logits(torch.max(per_frame_logits, dim=2)[0], torch.max(labels, dim=2)[0])
-            
+            cls_loss = F.cross_entropy(torch.max(per_frame_logits, dim=2)[0], torch.max(labels, dim=1)[0])
             tot_cls_loss += cls_loss.item()
             loss = (0.5 * loc_loss + 0.5 * cls_loss) / num_steps_per_update
             if pc_model == 'pn1' or pc_model == 'pn1_4d_basic':
@@ -260,14 +247,10 @@ def run(cfg, logdir, args):
 
             tot_loss += loss.item()
             loss.backward()
-            
-            
-            if cfg['DATA'].get('name') == 'MSR-Action3D': 
-                acc = utils.accuracy_v2(torch.argmax(per_frame_logits, dim=1), labels)
-            else:
-                acc = utils.accuracy_v2(torch.argmax(per_frame_logits, dim=1), torch.argmax(labels, dim=1))
-                
+
+            acc = utils.accuracy_v2(torch.argmax(per_frame_logits, dim=1), labels)
             avg_acc.append(acc.item())
+
             train_fraction_done = (train_batchind + 1) / train_num_batch
 
             if num_iter == num_steps_per_update or train_batchind == len(train_dataloader)-1:
@@ -278,7 +261,7 @@ def run(cfg, logdir, args):
                 optimizer.step()
                 optimizer.zero_grad()
                 # log train losses
-                train_log_dict = {
+                log_dict = {
                     "train/step": n_examples,
                     "train/loss": tot_loss / n_steps,
                     "train/cls_loss": tot_cls_loss / n_steps,
@@ -287,9 +270,7 @@ def run(cfg, logdir, args):
                     "train/lr":  optimizer.param_groups[0]['lr'],
                     "train/epoch": steps,
                 }
-                
-                train_result_list.append(train_log_dict)
-                #wandb.log(log_dict)
+                wandb.log(log_dict)
 
                 num_iter = 0
                 tot_loss = 0.
@@ -298,44 +279,42 @@ def run(cfg, logdir, args):
                 model.eval()
                 test_batchind, data = next(test_enum)
                 
-                if cfg['DATA'].get('name') == 'MSR-Action3D': 
-                    if torch.is_tensor(data[0]) == False or torch.is_tensor(data[1]) == False:
-                        data_list = []
-                        label_list = []
-                        for i in data:
-                            data_list.append(i[1])
-                            label_list.append(i[0])
-                            
-                        inputs = torch.stack(data_list)
-                        labels = torch.Tensor(label_list)
-                    else:
-                        inputs = data[1]
-                        labels = data[0]
-                else:
-                    inputs, labels, vid_idx, frame_pad = data['inputs'], data['labels'], data['vid_idx'], data['frame_pad']
+                # if torch.is_tensor(data[0]) == False or torch.is_tensor(data[1]) == False:
+                #     data_list = []
+                #     label_list = []
+                #     for i in data:
+                #         data_list.append(i[1])
+                #         label_list.append(i[0])
+                        
+                #     inputs = torch.stack(data_list)
+                #     labels = torch.Tensor(label_list)
+                # else:
+                #     inputs = data[1]
+                #     labels = data[0]
+                inputs = data[1]
+                labels = data[0]
                 
                 # inputs, labels, vid_idx, frame_pad = data['inputs'], data['labels'], data['vid_idx'], data['frame_pad']
                 in_channel = cfg['MODEL'].get('in_channel', 3)
-                inputs = inputs[:, :, 0:in_channel, :]
-                inputs = inputs.cuda().requires_grad_().contiguous()
-                labels = labels.cuda()
+                # inputs = inputs[:, :, 0:in_channel, :]
+
+                inputs = inputs.requires_grad_().contiguous()
+                # inputs = inputs.cuda().requires_grad_().contiguous()
+                # labels = labels.cuda()
 
                 with torch.no_grad():
                     out_dict = model(inputs)
                     per_frame_logits = out_dict['pred']
-                    if cfg['DATA'].get('name') == 'MSR-Action3D': 
-                        labels = labels.unsqueeze(1) + torch.zeros((per_frame_logits.shape[0], per_frame_logits.shape[2])).cuda()
-                        labels = labels.to(dtype = torch.long)
-                        # compute localization loss
-                        loc_loss = F.cross_entropy(per_frame_logits, labels)
-                        # compute classification loss (with max-pooling along time dim1 x dim2)
-                        cls_loss = F.cross_entropy(torch.max(per_frame_logits, dim=2)[0],
+
+                    labels = labels.unsqueeze(1) + torch.zeros((per_frame_logits.shape[0], per_frame_logits.shape[2]))
+                    # labels = labels.unsqueeze(1) + torch.zeros((per_frame_logits.shape[0], per_frame_logits.shape[2])).cuda()
+                    labels = labels.to(dtype = torch.long)
+
+                    # compute localization loss
+                    loc_loss = F.cross_entropy(per_frame_logits, labels)
+                    # compute classification loss (with max-pooling along time dim1 x dim2)
+                    cls_loss = F.cross_entropy(torch.max(per_frame_logits, dim=2)[0],
                                                                   torch.max(labels, dim = 1)[0])
-                    else:
-                        # compute localization loss
-                        loc_loss = F.binary_cross_entropy_with_logits(per_frame_logits, labels)
-                        cls_loss = F.binary_cross_entropy_with_logits(torch.max(per_frame_logits, dim=2)[0],
-                                                                  torch.max(labels, dim=2)[0])
                     
                     loss = (0.5 * loc_loss + 0.5 * cls_loss) / num_steps_per_update
                     if pc_model == 'pn1' or pc_model == 'pn1_4d_basic':
@@ -355,33 +334,12 @@ def run(cfg, logdir, args):
                     "test/Accuracy": acc.item(),
                     "test/epoch": steps
                 }
-                test_result_list.append(test_log_dict)
-                
-                if test_log_dict["test/Accuracy"] >= best_acc:
-                    best_acc = test_log_dict["test/Accuracy"]
-                    logger.info(f'********* Best model test accuracy so far in test batch {test_batchind} step {steps}: {test_log_dict}')
-                    
-                    # save model
-                    torch.save({"model_state_dict": model.module.state_dict(),
-                                "optimizer_state_dict": optimizer.state_dict(),
-                                "lr_state_dict": lr_sched.state_dict()},
-                            os.path.join(logdir,  'best' +'_'+ str(steps).zfill(6) + '_'+ str(test_batchind) + '.pt'))
-                    
-                    test_result_list[-1]['best'] = 'best' +'_'+ str(steps).zfill(6) + '_'+ str(test_batchind) + '.pt'
-                    
-                    with open(os.path.join(logdir, 'test_result_list.json'), 'w') as f:
-                        json.dump(test_result_list, f)
-                    
-                    with open(os.path.join(logdir, 'train_result_list.json'), 'w') as f:
-                        json.dump(train_result_list, f)
-                        
-                    best_model_list.append(test_result_list[-1])
-                    with open(os.path.join(logdir, 'best_model_list.json'), 'w') as f:
-                        json.dump(best_model_list, f)
-
-                #wandb.log(log_dict)
+                wandb.log(log_dict)
                 test_fraction_done = (test_batchind + 1) / test_num_batch
                 model.train()
+
+            print("DEBUG -344")
+
             loader_pbar.update()
         loader_pbar.close()
 

@@ -69,20 +69,19 @@ def run(cfg, logdir, model_path, output_path, args, logger=None):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-    #test_dataloader, test_dataset = build_dataloader(config=cfg, training=False, shuffle=False, logger=logger)
-    test_dataloader, test_dataset = build_dataloader(config=cfg, training=False, shuffle=False)
+    test_dataloader, test_dataset = build_dataloader(config=cfg, training=False, shuffle=False, logger=logger)
     num_classes = test_dataset.num_classes
 
     # setup the model
-    spec = importlib.util.spec_from_file_location('build_model_from_logdir', os.path.join(logdir, 'models', '__init__.py'))
+    spec = importlib.util.spec_from_file_location('build_model_from_logdir', os.path.join('models', '__init__.py'))
     build_model_from_logdir = importlib.util.module_from_spec(spec)
     sys.modules['build_model_from_logdir'] = build_model_from_logdir
     spec.loader.exec_module(build_model_from_logdir)
-    model = build_model_from_logdir.build_model_from_logdir(logdir, cfg['MODEL'], num_classes, frames_per_clip).get()
+    model = build_model_from_logdir.build_model_from_logdir('.', cfg['MODEL'], num_classes, frames_per_clip).get()
 
     checkpoints = torch.load(model_path)
     model.load_state_dict(checkpoints["model_state_dict"])  # load trained model
-    model.cuda()
+    # model.cuda()
     model = nn.DataParallel(model)
     model.eval()
 
@@ -95,17 +94,21 @@ def run(cfg, logdir, model_path, output_path, args, logger=None):
 
     for test_batchind, data in enumerate(test_dataloader):
         # get the inputs
-        inputs, labels, vid_idx, frame_pad = data['inputs'], data['labels'], data['vid_idx'], data['frame_pad']
+
+        labels, inputs = data
+        # inputs, labels, vid_idx, frame_pad = data['inputs'], data['labels'], data['vid_idx'], data['frame_pad']
         in_channel = cfg['MODEL'].get('in_channel', 3)
-        inputs = inputs[:, :, 0:in_channel, :].cuda()
-        labels = labels.cuda()
+        inputs = inputs[:, :, 0:in_channel, :] #.cuda()
+        labels = labels #.cuda()
 
         with torch.no_grad():
             out_dict = model(inputs)
 
         logits = out_dict['pred']
 
-        acc = i3d_utils.accuracy_v2(torch.argmax(logits, dim=1), torch.argmax(labels, dim=1))
+        print(inputs.shape, labels.shape, logits.shape)
+
+        acc = i3d_utils.accuracy_v2(torch.argmax(logits, dim=1), labels)
         avg_acc.append(acc.detach().cpu().numpy())
         n_examples += batch_size
         logger.info('batch Acc: {}, [{} / {}]'.format(acc.item(), test_batchind, len(test_dataloader)))
@@ -127,7 +130,7 @@ def run(cfg, logdir, model_path, output_path, args, logger=None):
 
 
 def main(args):
-    cfg = yaml.safe_load(open(os.path.join(args.logdir, args.identifier, 'config.yaml')))
+    cfg = yaml.safe_load(open(args.config))
     logdir = os.path.join(args.logdir, args.identifier)
     output_path = os.path.join(logdir, 'results')
     os.makedirs(output_path, exist_ok=True)

@@ -20,7 +20,10 @@ class MSRAction3DDataset(torch.utils.data.Dataset):
     msr_action3d_depth_map_sequence_labels = NumPy.load(os.path.join(dataset_path, 'MSRAction3D_FPS_Video_Labels.npz'))['labels']
 
     # Store the number of depth maps per clip in a variable.
-    clip_size = 8
+    clip_size = cfg_data['frames_per_clip']
+
+    # Store the number of action classes in a variable.
+    self.num_classes = 20
 
     # Initialize a dictionary to hold the MSRAction3D clips and their labels.
     MSRAction3D_dataset = {'labels': [], 'clips': []}
@@ -37,9 +40,6 @@ class MSRAction3DDataset(torch.utils.data.Dataset):
 
     # Concatenate all the label Tensors in the dataset together to form a single Tensor. Similarly, 
     # concatenate all the clip Tensors into a single Tensor.
-    #labels = torch.concatenate(MSRAction3D_dataset['labels'])
-    #subsequences = torch.concatenate(MSRAction3D_dataset['clips'])
-    
     labels = torch.concat(MSRAction3D_dataset['labels'])
     subsequences = torch.concat(MSRAction3D_dataset['clips'])
 
@@ -58,16 +58,22 @@ class MSRAction3DDataset(torch.utils.data.Dataset):
 
     # Store the clips in the dataset in a variable.
     self.clip_set = MSRAction3D_dataset['clips']
+
   def __getitem__(self, integral_key):
     # Implemented the __getitem__ method of this dataset.
     return (self.labels[integral_key], self.subsequences[integral_key])
   def __len__(self):
     # Implemented the __len__ method of this dataset.
     return len(self.labels)
+  def get_num_seq(self):
+    # Implemented the get_num_seq method of this dataset.
+    return len(self.labels)
   def __getitems__(self, batch_indices):
     # Implemented the __getitems__ method of this dataset.
     return (self.labels[batch_indices], self.subsequences[batch_indices])
   def make_weights_for_balanced_classes(self):
-    label_counts = self.labels.unique(return_counts = True)[1]
-    self.num_classes = label_counts.shape[0]
+    # Implemented the make_weights_for_balanced_classes method.
+    label_counts = torch.zeros((self.num_classes, ))
+    for label in self.labels.to(dtype = torch.long):
+      label_counts[label] += 1
     return list(label_counts / label_counts.sum())
