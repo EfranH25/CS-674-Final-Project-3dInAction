@@ -9,6 +9,8 @@ from .MSRAction3DDataset import MSRAction3DDataset
 import i3d_utils as utils
 import logging
 
+import os
+
 def create_basic_logger(logdir, level = 'info'):
     print(f'Using logging level {level} for train.py')
     global logger
@@ -27,7 +29,7 @@ def create_basic_logger(logdir, level = 'info'):
         logger.setLevel(logging.CRITICAL)
     else:
         logger.setLevel(logging.INFO)
-    
+
     #? create handlers
     file_handler = logging.FileHandler(os.path.join(logdir, "log_train.log"))
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -68,10 +70,12 @@ def build_dataloader(config, training=True, shuffle=False, logger=None):
     batch_size = config['TRAINING'].get('batch_size') if training else config['TESTING'].get('batch_size')
     data_sampler = config['DATA'].get('data_sampler')
 
+    print('BATCH_SIZE = {}'.format(batch_size))
+
     split = 'train' if training else 'test'
-    
+
     if logger == None:
-        logger = create_basic_logger(logdir = config, level = 'info')
+        logger = create_basic_logger(logdir = config['test_logdir'], level = 'info')
         logger.info(f"Number of clips in the {split} set: {len(dataset)}")
     else:
         logger.info("Number of clips in the {} set: {}".format(split, len(dataset)))
@@ -89,12 +93,13 @@ def build_dataloader(config, training=True, shuffle=False, logger=None):
         sampler = torch.utils.data.sampler.WeightedRandomSampler(weights, len(weights))
     else:
         sampler = None
+        dataset.make_weights_for_balanced_classes()
 
     dataloader = DataLoader(
         dataset=dataset,
         shuffle=shuffle,
         num_workers=num_workers,
-        sampler=sampler,
+        #sampler=sampler,
         collate_fn=lambda x: x,
         batch_size=batch_size,
         #pin_memory=True, #pins to CUDA

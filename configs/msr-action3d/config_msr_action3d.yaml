@@ -1,9 +1,8 @@
 DATA:
   data_sampler: weighted
-  dataset_path: datasets/data/MSRAction3D_fps
+  dataset_path: /GoogleDrive/MyDrive/Colab Notebooks/COMPSCI 674/Final Project/MSRAction3DFPS/MSRAction3D_fps/
   frame_skip: 1
-  frames_per_clip: 64
-  gender: all
+  frames_per_clip: 4
   n_points: 128
   name: MSR-Action3D
   noisy_data:
@@ -80,18 +79,19 @@ MODEL:
 TESTING:
   aug:
   - ''
-  batch_size: 2
+  batch_size: 32
   set: test
 TRAINING:
   aug:
   - ''
   batch_size: 32
-  lr: 0.001
-  n_epochs: 3000
+  lr: 0.1
+  n_epochs: 300
   pretrained_model: null
   refine: false
-  refine_epoch: 2700
+  refine_epoch: 0
   steps_per_update: 8
 num_workers: 0
 save_every: 100 #10
 seed: 0
+test_logdir: ./test_log/

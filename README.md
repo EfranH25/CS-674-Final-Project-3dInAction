@@ -91,3 +91,8 @@ If you find our work useful in your research, please cite our paper:
 ```
 
 See [LICENSE](https://github.com/sitzikbs/3dincaction/blob/main/LICENCE) file.
+
+
+Source code/lines of code that I wrote are listed below:
+
+Instructions for running the code, training, testing the model and installing any external libraries that are being used.

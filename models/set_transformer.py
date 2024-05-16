@@ -49,6 +49,7 @@ class ISAB(nn.Module):
         self.mab1 = MAB(dim_in, dim_out, dim_out, num_heads, ln=ln)
 
     def forward(self, X):
+        print("ISAB Forward: ", X.shape, self.I.repeat(X.size(0), 1, 1).shape)
         H = self.mab0(self.I.repeat(X.size(0), 1, 1), X)
         return self.mab1(X, H)
 
@@ -135,8 +136,9 @@ class SetTransformerTemporal(SetTransformer):
         self.final_layer = nn.Linear(256, num_class)
 
     def forward(self, X):
-        b, t, d, n = X.shape
-        X = X.reshape(b*t, d, n).permute(0, 2, 1)
+        b, t, n, d = X.shape
+        print("Forward: ", X.shape)
+        X = X.reshape(b*t, n, d) #.permute(0, 2, 1)
         out = self.dec(self.enc(X)).squeeze()
         # out = out.reshape(b, t, self.dim_hidden).permute(0, 2, 1)
         out = self.classifier12(out)
